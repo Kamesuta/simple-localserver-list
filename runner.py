@@ -94,6 +94,22 @@ def unpublish(https_port: int) -> None:
     ts_serve(f"--https={https_port}", "off")
 
 
+def unpublish_dead(https_port: int, snap: dict | None = None) -> None:
+    """宛先の止まった公開だけを外す。守る番号・台帳にある行・宛先がまだ生きているものは断る。"""
+    if https_port in registry.RESERVED_HTTPS_PORTS:
+        raise registry.RegistryError(f"https ポート {https_port} には触らない")
+    snap = snap or scan.snapshot()
+    if any(s.get("https_port") == https_port for s in snap["servers"]):
+        raise registry.RegistryError("台帳にある行の公開は、その行の削除で外す")
+    handlers = scan.parse_serve(scan.serve_status()).get(https_port, [])
+    if not handlers:
+        raise registry.RegistryError(f"https ポート {https_port} は公開されていない")
+    dead = {(o["https_port"], o["path"]) for o in snap["orphans"]}
+    if not all((https_port, h["path"]) in dead for h in handlers):
+        raise registry.RegistryError("宛先がまだ動いているので外さない")
+    unpublish(https_port)
+
+
 def logs(name: str, lines: int = 60) -> str:
     if not has_session(name):
         return ""

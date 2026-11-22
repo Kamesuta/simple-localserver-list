@@ -98,18 +98,7 @@ def adopt(port: int) -> dict:
 
 def unpublish(https_port: int) -> None:
     """死んだ公開を外す。台帳にあるポート・443・まだ宛先が生きているものは断る。"""
-    if https_port in registry.RESERVED_HTTPS_PORTS:
-        raise registry.RegistryError(f"https ポート {https_port} には触らない")
-    snap = scan.snapshot()
-    if any(s.get("https_port") == https_port for s in snap["servers"]):
-        raise registry.RegistryError("台帳にある行の公開は、その行の削除で外す")
-    handlers = scan.parse_serve(scan.serve_status()).get(https_port, [])
-    if not handlers:
-        raise registry.RegistryError(f"https ポート {https_port} は公開されていない")
-    dead = {(o["https_port"], o["path"]) for o in snap["orphans"]}
-    if not all((https_port, h["path"]) in dead for h in handlers):
-        raise registry.RegistryError("宛先がまだ動いているので外さない")
-    runner.unpublish(https_port)
+    runner.unpublish_dead(https_port)
 
 
 def stop_or_restart(name: str, restart: bool) -> dict:

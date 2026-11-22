@@ -10,8 +10,9 @@
   srv fav <名前> [--off]   お気に入りに入れる/外す(画面の最初のタブ)
   srv share <名前> [--minutes 60] [--off]   trycloudflare で外に公開(時間で自動で止まる)
   srv autostart            autostart のものを全部立てる(ログイン時に)
+  srv port [-n 2]          帯(既定 7400-7599)の中の空いているポートを出す
+  srv tidy [--dry-run]     宛先の止まった公開をまとめて外す
   srv ui [stop|attach]     一覧の画面を tmux で立てて URL を出す(https :7463)
-  srv port                 空いているポートを 1 つ出す
   srv attach <名前>        tmux に入る(抜けるのは Ctrl-b d)
 
 一覧の画面: srv ui が出す URL(https://<この Mac の名前>.<tailnet>.ts.net:7463/)
@@ -261,17 +262,44 @@ def cmd_port(a):
     used |= set(scan.parse_serve(scan.serve_status()))
     for e in registry.load_all():
         used |= {e.get("port"), e.get("https_port")}
-    for p in range(a.start, 65000):
-        if p in used:
-            continue
+
+    def bindable(p):
         with socket.socket() as s:
             try:
                 s.bind(("127.0.0.1", p))
+                return True
             except OSError:
-                continue
-        print(p)
+                return False
+
+    ports = registry.pick_ports(used, a.count, ok=bindable)
+    if not ports:
+        lo, hi = registry.PORT_RANGE
+        die(f"帯 {lo}-{hi} に空きが {a.count} 個ない。SLL_PORT_RANGE を広げること")
+    print(" ".join(map(str, ports)))
+
+
+def cmd_tidy(a):
+    snap = scan.snapshot()
+    ports = sorted({o["https_port"] for o in snap["orphans"]})
+    if not ports:
+        print("片付けるものは無い")
         return
-    die("空きが見つからない")
+    done, refused = [], []
+    for hp in ports:
+        if a.dry_run:
+            print(f"  :{hp}  " + ", ".join(f"{o['path']} → {o['target']}" for o in snap["orphans"] if o["https_port"] == hp))
+            continue
+        try:
+            runner.unpublish_dead(hp, snap)
+            done.append(hp)
+        except (registry.RegistryError, runner.RunError) as ex:
+            refused.append((hp, str(ex)))
+    if a.dry_run:
+        print(f"外すもの {len(ports)} 個(--dry-run なので何もしていない)")
+        return
+    print(f"外した {len(done)} 個: " + " ".join(f":{p}" for p in done))
+    for hp, why in refused:
+        print(f"  外さなかった :{hp}  {why}")
 
 
 def cmd_attach(a):
@@ -331,9 +359,13 @@ def main():
     s = sub.add_parser("autostart", help="autostart のものを全部立てる")
     s.set_defaults(f=cmd_autostart)
 
-    s = sub.add_parser("port", help="空いているポートを出す")
-    s.add_argument("--start", type=int, default=7500)
+    s = sub.add_parser("port", help="帯(SLL_PORT_RANGE、既定 7400-7599)の中の空いているポートを出す")
+    s.add_argument("--count", "-n", type=int, default=1, help="いくつ出すか(中と外で分けるなら 2)")
     s.set_defaults(f=cmd_port)
+
+    s = sub.add_parser("tidy", help="宛先の止まった公開をまとめて外す")
+    s.add_argument("--dry-run", action="store_true", help="外すものを出すだけ")
+    s.set_defaults(f=cmd_tidy)
 
     # 起動コマンドは -- のあと。argparse の REMAINDER は名前のあとの --port まで飲むので、先に切り分ける
     argv = sys.argv[1:]

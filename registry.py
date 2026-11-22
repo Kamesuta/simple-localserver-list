@@ -35,6 +35,31 @@ FIELDS = {
 RESERVED_HTTPS_PORTS = {int(x) for x in os.environ.get("SLL_RESERVED_PORTS", "443").split(",") if x.strip().isdigit()}
 
 
+def _parse_range(text: str) -> tuple[int, int]:
+    lo, _, hi = text.partition("-")
+    try:
+        lo_i, hi_i = int(lo), int(hi or lo)
+    except ValueError:
+        return 7400, 7599
+    return (lo_i, hi_i) if lo_i <= hi_i else (hi_i, lo_i)
+
+
+# srv port が番号を出す帯。新しいサーバーはここから選ぶ(番号が散らないように)。SLL_PORT_RANGE="7400-7599"
+PORT_RANGE = _parse_range(os.environ.get("SLL_PORT_RANGE", "7400-7599"))
+
+
+def pick_ports(used: set, count: int = 1, rng: tuple[int, int] = PORT_RANGE, ok=lambda p: True) -> list[int]:
+    """帯の中で、used に無く ok(p) が真の番号を小さい順に count 個。足りなければ空のリスト。"""
+    out = []
+    for p in range(rng[0], rng[1] + 1):
+        if p in used or p in RESERVED_HTTPS_PORTS or not ok(p):
+            continue
+        out.append(p)
+        if len(out) == count:
+            return out
+    return []
+
+
 def home() -> Path:
     return Path(os.environ.get("SLL_HOME", Path.home() / ".config" / "simple-localserver-list"))
 

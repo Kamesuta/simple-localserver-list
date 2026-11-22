@@ -33,6 +33,7 @@ launchctl load ~/Library/LaunchAgents/local.srv.plist
 | --- | --- | --- |
 | `SLL_HOME` | `~/.config/simple-localserver-list` | 台帳などの置き場所 |
 | `SLL_PORT` / `SLL_HTTPS_PORT` | `7440` / `7463` | パネルが待つポート / tailnet に出す番号 |
+| `SLL_PORT_RANGE` | `7400-7599` | `srv port` が番号を出す帯。新しいサーバーはここから選ぶ |
 | `SLL_RESERVED_PORTS` | `443` | パネルからも `srv` からも触らない https の番号(カンマ区切り)。ほかの道具が使っている口を守る |
 | `SLL_STALE_DAYS` | `3` | お気に入り以外で、これだけ止まっていたら「片付け」に出す |
 

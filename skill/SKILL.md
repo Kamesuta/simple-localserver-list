@@ -17,7 +17,7 @@ allowed-tools:
 「起動のしかた」が台帳に残るので、マシンを再起動しても画面のボタン 1 つで戻せる。リンクも一覧に並ぶ。
 
 ```sh
-srv port                                    # 空いているポートを 1 つ出す(7500 から)
+srv port [-n 2]                             # 帯(既定 7400-7599)の中の空いているポートを出す
 srv add <名前> --port P [--note "何の画面か"] -- <起動コマンド…>
 srv ls                                      # 状態つきの一覧
 srv logs <名前>                              # tmux の最後の行
@@ -25,6 +25,7 @@ srv stop|start|restart <名前>                # stop は公開も外す(start �
 srv rm <名前>                                # 止めて、公開を外して、台帳から消す
 srv fav <名前> [--off]                       # お気に入り(画面の最初のタブ)
 srv share <名前> [--minutes 60] [--off]      # trycloudflare で外に公開(時間で自動で止まる)
+srv tidy [--dry-run]                        # 宛先の止まった公開をまとめて外す
 srv ui                                      # 一覧の画面の URL(立っていなければ立てる)
 ```
 
@@ -41,6 +42,7 @@ srv ui                                      # 一覧の画面の URL(立って�
 - **名前**: 英小文字・数字・`-` `_`。何の画面か分かる名前にする(`blog-preview`、`admin-ui` など)。同じ名前で add し直すと上書きになる
 - **起動コマンド**: 今のフォルダ(`--cwd` で変えられる)から、そのまま再現できる形で書く
   - サーバーは**前で動き続ける**コマンドにする(`&` や `nohup` を付けない。tmux が面倒を見る)
+  - **ポートは自分で選ばず `srv port` に聞く**(帯の中から出す。番号が散らないように)。中と外で 2 つ要るなら `srv port -n 2`
   - ポートは決め打ちにする(vite なら `--port P --strictPort`)。勝手に次の番号へずれると、台帳とずれる
   - 待つアドレスは `127.0.0.1` か `localhost` でよい。外へは tailscale serve が出す
 - **`--note`**: 一覧に出す一言。「何の画面か」を書く
@@ -51,12 +53,14 @@ srv ui                                      # 一覧の画面の URL(立って�
 - **`--autostart`**: ログイン時にも立てたい常用のものだけ付ける
 - **`--no-start`**: もう動いているものを、後から登録だけするとき
 - **`--https-port H`**: tailnet に出す番号を変えたいとき(既定は `--port` と同じ番号)。守る番号(既定 443)は選べない
+  - サーバーが待つアドレスを選べず、全部のアドレス(`0.0.0.0`)で待つときは必ず別の番号にする。同じ番号だと tailscale serve とぶつかる
 
 ## 例
 
 ```sh
 cd ~/src/my-blog
-srv add blog-preview --port 4321 --note "ブログの下書きプレビュー" -- npx astro dev --port 4321
+srv port                     # → 7401 のように出る
+srv add blog-preview --port 7401 --note "ブログの下書きプレビュー" -- npx astro dev --port 7401
 ```
 
 ## 外に公開する(tailnet の外の人に見せる)

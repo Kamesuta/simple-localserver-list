@@ -150,6 +150,25 @@ class ScanTest(unittest.TestCase):
         self.assertTrue(admin["protected"])
 
 
+class PickPortsTest(unittest.TestCase):
+    def test_skips_used_and_reserved(self):
+        self.assertEqual(registry.pick_ports({7400, 7401}, 1, (7400, 7410)), [7402])
+        self.assertEqual(registry.pick_ports(set(), 2, (442, 445)), [442, 444])  # 443 は守る番号
+
+    def test_count_and_ok(self):
+        self.assertEqual(registry.pick_ports(set(), 3, (7400, 7410), ok=lambda p: p % 2 == 0), [7400, 7402, 7404])
+
+    def test_range_edges_and_full(self):
+        self.assertEqual(registry.pick_ports({7400}, 1, (7400, 7401)), [7401])
+        self.assertEqual(registry.pick_ports({7400, 7401}, 1, (7400, 7401)), [])
+        self.assertEqual(registry.pick_ports(set(), 3, (7400, 7401)), [])
+
+    def test_parse_range(self):
+        self.assertEqual(registry._parse_range("8000-8099"), (8000, 8099))
+        self.assertEqual(registry._parse_range("8099-8000"), (8000, 8099))
+        self.assertEqual(registry._parse_range("x"), (7400, 7599))
+
+
 class FavoriteAndLastUpTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
