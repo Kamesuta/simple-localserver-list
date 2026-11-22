@@ -53,6 +53,9 @@ def serve_status() -> dict:
 
 
 def dns_name() -> str:
+    # SLL_HOST で上書きできる(デモやスクショで、本物の名前を出さないため)
+    if os.environ.get("SLL_HOST"):
+        return os.environ["SLL_HOST"]
     out = _run([tailscale_bin(), "status", "--json"])
     try:
         return json.loads(out)["Self"]["DNSName"].rstrip(".")

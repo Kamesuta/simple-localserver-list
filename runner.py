@@ -2,7 +2,7 @@
 
 起動は tmux セッション `srv-<名前>` の中。落ちてもログが残るよう、終わったら Enter を待つ
 (simple-remote-git/serve.sh と同じ型)。
-守る番号(既定 443)の公開には絶対に触らない。
+守る https ポート(既定は 443。registry.RESERVED_HTTPS_PORTS)の公開には絶対に触らない。
 """
 import shlex
 import subprocess

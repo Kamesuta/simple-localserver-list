@@ -30,8 +30,9 @@ FIELDS = {
     "created_at": str,
 }
 
-# 443 はほかの道具が使っている。台帳からは触らせない
-RESERVED_HTTPS_PORTS = {443}
+# 台帳からは触らせない https ポート(ほかの道具が使っている口)。既定は 443。
+# SLL_RESERVED_PORTS="443,8443" のようにカンマ区切りで変えられる(空にすれば何も守らない)
+RESERVED_HTTPS_PORTS = {int(x) for x in os.environ.get("SLL_RESERVED_PORTS", "443").split(",") if x.strip().isdigit()}
 
 
 def home() -> Path:

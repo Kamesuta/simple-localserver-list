@@ -77,7 +77,7 @@ def _find_url(name: str) -> str:
 
 
 def _published(url: str) -> bool:
-    """Cloudflare の DNS に名前が載ったか。載る前に手元(やユーザーのスマホ)で引くと、
+    """Cloudflare の DNS に名前が載ったか。載る前に手元(や URL を渡した相手のスマホ)で引くと、
     「無い名前」として覚えられて、しばらく開けなくなる。手元の DNS は使わず 1.1.1.1 に聞く。"""
     host = url.split("//", 1)[-1]
     try:

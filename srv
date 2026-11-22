@@ -9,11 +9,12 @@
   srv logs <名前> [-n 60]  tmux の最後の行
   srv fav <名前> [--off]   お気に入りに入れる/外す(画面の最初のタブ)
   srv share <名前> [--minutes 60] [--off]   trycloudflare で外に公開(時間で自動で止まる)
-  srv autostart            autostart のものを全部立てる(ログイン時に ログイン時のスクリプト から)
+  srv autostart            autostart のものを全部立てる(ログイン時に)
+  srv ui [stop|attach]     一覧の画面を tmux で立てて URL を出す(https :7463)
   srv port                 空いているポートを 1 つ出す
   srv attach <名前>        tmux に入る(抜けるのは Ctrl-b d)
 
-一覧の画面: https://<この Mac>:7463/
+一覧の画面: srv ui が出す URL(https://<この Mac の名前>.<tailnet>.ts.net:7463/)
 """
 import argparse
 import json
@@ -190,6 +191,46 @@ def cmd_share(a):
     print(r["url"])
 
 
+UI_SESSION = "srvlist"
+
+
+def cmd_ui(a):
+    """一覧の画面(server.py)を tmux で立てる。画面は自分で tailscale serve(:7463)を張る。"""
+    import time
+    import urllib.request
+
+    here = Path(__file__).resolve().parent
+    port = int(os.environ.get("SLL_PORT", "7440"))
+    https_port = int(os.environ.get("SLL_HTTPS_PORT", "7463"))
+    alive = runner._tmux("has-session", "-t", f"={UI_SESSION}").returncode == 0
+    if a.action == "stop":
+        if alive:
+            runner._tmux("kill-session", "-t", f"={UI_SESSION}")
+        runner.unpublish(https_port)
+        print("畳んだ" if alive else "立っていない")
+        return
+    if a.action == "attach":
+        os.execvp("tmux", ["tmux", "attach", "-t", f"={UI_SESSION}"])
+    if not alive:
+        owner = runner.port_owner(port)
+        if owner:
+            die(f"ポート {port} は別のプロセスが使っている({owner['name']} pid {owner['pid']})")
+        line = f"cd {shlex.quote(str(here))} && python3 server.py; echo; echo '(止まった。Enter で閉じる)'; read _"
+        r = runner._tmux("new-session", "-d", "-s", UI_SESSION, "/bin/zsh", "-c", f"export PATH={shlex.quote(runner.PATH)}:\"$PATH\"; {line}")
+        if r.returncode != 0:
+            die(f"tmux で起動できない: {r.stderr.strip()}")
+    for _ in range(40):
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1)
+            break
+        except OSError:
+            time.sleep(0.25)
+    else:
+        die("画面が返事をしない。srv ui attach で様子を見ること")
+    host = scan.dns_name()
+    print(f"https://{host}:{https_port}/" if host else f"http://127.0.0.1:{port}/")
+
+
 def cmd_logs(a):
     out = runner.logs(a.name, a.n)
     print(out if out else "(tmux のセッションが無い)")
@@ -273,6 +314,10 @@ def main():
     s.add_argument("--minutes", type=int, default=60, help="この分数で自動で止まる(既定 60)")
     s.add_argument("--off", action="store_true")
     s.set_defaults(f=cmd_share)
+
+    s = sub.add_parser("ui", help="一覧の画面を立てて URL を出す(stop で畳む / attach でログ)")
+    s.add_argument("action", nargs="?", choices=["start", "stop", "attach"], default="start")
+    s.set_defaults(f=cmd_ui)
 
     s = sub.add_parser("ls", help="一覧")
     s.add_argument("--json", action="store_true")
