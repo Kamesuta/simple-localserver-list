@@ -228,3 +228,13 @@ svg path, svg circle, svg rect { fill: none; stroke: currentColor; stroke-width:
 
 /* 長押しはシートを出すので、iOS のリンクのプレビューと文字の選択を止める */
 .tile > a, .row > a { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+
+/* 外に公開(trycloudflare)*/
+.chip.share { gap: 4px; background: var(--accent-bg); color: var(--accent); border-color: transparent; }
+.chip.share svg path, .chip.share svg circle { stroke-width: 2.2; }
+.share-box.on { padding: 10px 12px; border-radius: 10px; background: var(--accent-bg); }
+.share-url { display: block; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; color: var(--accent); overflow-wrap: anywhere; }
+.share-box .why { margin: 4px 0 10px; font-size: 12px; color: var(--muted); }
+p.why { margin: 0; font-size: 12px; color: var(--muted); }
+.btn.bad { color: var(--err); }
+.btn.wide { width: 100%; gap: 6px; }

@@ -15,6 +15,7 @@
 srv add <名前> --port P [--note メモ] [--env-file F] [--fav] [--autostart] -- <起動コマンド…>
 srv ls / logs / start / stop / restart / rm / attach <名前>
 srv fav <名前> [--off]   お気に入り(画面の最初のタブ)
+srv share <名前> [--minutes 60] [--off]   trycloudflare で外に公開(時間で自動で止まる)
 srv autostart   # autostart のものを全部立てる(ログイン時)
 srv port        # 空いているポート
 ```
@@ -29,7 +30,11 @@ srv port        # 空いているポート
     - 台帳に無いのに動いているもの
     - 宛先の止まった tailscale の公開
 - タイルや行を押すと、そのページへ 1 回で飛ぶ。止まっているものは、起動してから飛ぶ
-- ⋯ か長押しでシートが出る。停止・再起動・ログ・起動のしかた・削除はここ
+- ⋯ か長押しでシートが出る。停止・再起動・外に公開・ログ・起動のしかた・削除はここ
+- **外に公開**: trycloudflare(Cloudflare の Quick Tunnel)で、誰でも開ける URL を作る
+  - 1 時間で自動で止まる
+  - URL は毎回新しくなり、止めれば使えなくなる
+  - サーバーを止めると、外への公開も止まる
 - アイコンとタイトルは、各ページの favicon と `<title>` から拾う(`meta.py`)。取れなければ頭文字
 
 ## 仕組み
@@ -38,6 +43,7 @@ srv port        # 空いているポート
 |---|---|
 | `srv` | CLI。`~/.local/bin/srv` からリンクを張る |
 | `registry.py` | 台帳 `~/.config/simple-localserver-list/servers/<名前>.json` の読み書き(`SLL_HOME` で場所を変えられる)。お気に入りと、最後に動いていた時刻(`last_up.json`)も |
+| `share.py` | 外に公開(tmux `srvshare-<名前>` で `cloudflared tunnel --url`)。時間がたつと tmux の中で自分から止まる。Host ヘッダは `localhost:<ポート>` に書き換える(vite が知らないホストを断るため)。Cloudflare の DNS(1.1.1.1)に名前が載ってから URL を返す |
 | `meta.py` | 動いているページのタイトルと favicon を拾う(127.0.0.1 だけ。1 分覚える。一覧を待たせないよう後ろで取る) |
 | `scan.py` | `tailscale serve status --json`・`lsof`・`ps`・`tmux` を照らし合わせ、状態(🟢 up / 🟡 partial / ⏳ starting / 🔴 crashed / ⚪ down)を付ける |
 | `runner.py` | tmux セッション `srv-<名前>` での起動・停止、`tailscale serve` の張る/外す |
@@ -54,6 +60,7 @@ srv port        # 空いているポート
 - 画面からコマンドを書き換える入口は作らない。任意のコマンドを実行させないため。直すのは `srv add` か Claude に頼む
 - 画面の登録(adopt)と公開を外す(unpublish)は、サーバー側でスキャンし直した値だけを使う
 - POST/DELETE には `X-SLL: 1` ヘッダを要る。ほかのページからの CSRF よけ
+- 外に公開した URL は、Cloudflare の DNS に載る前に引くと「無い名前」として手元の DNS に覚えられ、しばらく開けなくなる(実測で 10〜20 秒)。そのため 1.1.1.1 で引けるまで待ってから URL を返す
 - srv の tmux の外で動いているものは止めない(pid を殺すと別物を巻き込みうる)
 
 ### ログイン時

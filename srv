@@ -8,6 +8,7 @@
   srv ls [--json]          状態つきの一覧(🟢 動いている / 🟡 公開なし / 🔴 落ちた / ⚪ 止まっている)
   srv logs <名前> [-n 60]  tmux の最後の行
   srv fav <名前> [--off]   お気に入りに入れる/外す(画面の最初のタブ)
+  srv share <名前> [--minutes 60] [--off]   trycloudflare で外に公開(時間で自動で止まる)
   srv autostart            autostart のものを全部立てる(ログイン時に ログイン時のスクリプト から)
   srv port                 空いているポートを 1 つ出す
   srv attach <名前>        tmux に入る(抜けるのは Ctrl-b d)
@@ -124,7 +125,12 @@ def cmd_rm(a):
 
 
 def cmd_ls(a):
+    import share
+
     snap = scan.snapshot()
+    shares = share.all_status()
+    for s in snap["servers"]:
+        s["share"] = shares.get(s.get("name"))
     if a.json:
         print(json.dumps(snap, ensure_ascii=False, indent=2))
         return
@@ -145,6 +151,8 @@ def cmd_ls(a):
             flags.append("自動起動")
         if s.get("favorite"):
             flags.append("★")
+        if s.get("share"):
+            flags.append(f"🌐 {s['share']['url']}")
         extra = f"  [{' / '.join(flags)}]" if flags else ""
         print(f"{MARK[s['state']]} {s['name']:<20} {s['url'] or ':' + str(s['https_port'])}{extra}")
         if s["note"]:
@@ -166,6 +174,20 @@ def cmd_fav(a):
     except registry.RegistryError as ex:
         die(str(ex))
     print(("お気に入りから外した: " if a.off else "お気に入りに入れた: ") + a.name)
+
+
+def cmd_share(a):
+    import share
+
+    if a.off:
+        print("外への公開を止めた" if share.stop(a.name) else "外に出していない")
+        return
+    try:
+        r = share.start(a.name, a.minutes)
+    except (runner.RunError, registry.RegistryError) as ex:
+        die(str(ex))
+    print(f"外に公開した({a.minutes} 分で自動で止まる。誰でも開ける)")
+    print(r["url"])
 
 
 def cmd_logs(a):
@@ -245,6 +267,12 @@ def main():
     s.add_argument("name")
     s.add_argument("--off", action="store_true")
     s.set_defaults(f=cmd_fav)
+
+    s = sub.add_parser("share", help="trycloudflare で外に公開する(--off で止める)")
+    s.add_argument("name")
+    s.add_argument("--minutes", type=int, default=60, help="この分数で自動で止まる(既定 60)")
+    s.add_argument("--off", action="store_true")
+    s.set_defaults(f=cmd_share)
 
     s = sub.add_parser("ls", help="一覧")
     s.add_argument("--json", action="store_true")

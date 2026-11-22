@@ -18,6 +18,7 @@ const ICONS = {
   more: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
   star: '<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.9z"/></svg>',
   ext: '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17L17 7"/><path d="M8 7h9v9"/></svg>',
+  globe: '<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18"/><path d="M12 3a14 14 0 0 0 0 18"/></svg>',
   lock: '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
 };
 
@@ -174,6 +175,8 @@ function starBtn(s, cls = "side") {
   }, svg("star"));
 }
 const subText = (s) => s.note || s.title || "";
+const shareChip = (s) => s.share && h("span", { class: "chip share", title: s.share.url }, svg("globe"), "外に公開中");
+const minsLeft = (st) => Math.max(0, Math.round((st.expires - Date.now() / 1000) / 60));
 function confirmDelete(s) {
   if (!confirm(`${s.name} を台帳から消す?\n止めて、tailscale の公開 :${s.https_port} も外す。`)) return;
   if (sheet) closeSheet();
@@ -196,6 +199,7 @@ function renderFav(servers) {
       wireOpen(h("a", { href: s.url, target: "_blank", rel: "noopener" },
         ico(s),
         h("div", {}, h("div", { class: "nm" }, s.name), h("div", { class: "sub" }, subText(s) || " ")),
+        s.share && h("div", {}, shareChip(s)),
         h("div", { class: "foot" }, h("span", { class: `dot ${s.state}` }), h("span", { class: "st" }, st),
           h("span", { class: "port" }, `:${s.https_port}`))), s));
   }))];
@@ -222,7 +226,7 @@ function renderNew(servers) {
       out.push(h("div", { class: `row ${created(s) > seenShown ? "fresh" : ""}` },
         ico(s, "sm"),
         wireOpen(h("a", { href: s.url, target: "_blank", rel: "noopener" },
-          h("div", { class: "l1" }, h("span", { class: "nm" }, s.name), s.draft && h("span", { class: "chip" }, "下書き")),
+          h("div", { class: "l1" }, h("span", { class: "nm" }, s.name), s.draft && h("span", { class: "chip" }, "下書き"), shareChip(s)),
           h("div", { class: "meta" },
             h("span", { class: `dot ${s.state}` }), h("span", {}, STATE[s.state]),
             h("span", {}, `・ ${when(created(s))}`),
@@ -297,7 +301,7 @@ function closeSheet() {
   $("layer").replaceChildren();
   document.body.classList.remove("locked");
 }
-const sheetKey = (s) => [s.state, s.favorite, errors[s.name] || ""].join("|");
+const sheetKey = (s) => [s.state, s.favorite, s.share?.url || "", errors[s.name] || ""].join("|");
 function openSheet(name) {
   const s = snap?.servers.find((x) => x.name === name);
   if (!s) return;
@@ -342,6 +346,8 @@ function openSheet(name) {
         onclick: () => navigator.clipboard?.writeText(s.url).then(() => toast("URL をコピーした"), () => toast("コピーできなかった")),
       }, "URL をコピー")),
     errors[s.name] && h("div", { class: "err-box" }, errors[s.name]),
+    h("div", { class: "sec" }, h("b", {}, "外に公開"), h("span", {}, "trycloudflare ・ 誰でも開ける")),
+    shareBox(s, run),
     h("div", { class: "sec" }, h("b", {}, "ログ"), h("span", {}, "tmux の最後の行")),
     log,
     h("div", { class: "sec" }, h("b", {}, "起動のしかた"), h("span", {}, "直すときは Claude に頼む")),
@@ -362,6 +368,42 @@ function openSheet(name) {
     log.textContent = lines.length ? lines.join("\n") : none;
     log.scrollTop = log.scrollHeight;
   }).catch((e) => (log.textContent = e.message));
+}
+
+// 外に公開(trycloudflare)。URL は毎回新しく、時間がたつと自動で止まる
+function shareBox(s, run) {
+  if (s.share) {
+    const left = minsLeft(s.share);
+    return h("div", { class: "share-box on" },
+      h("a", { class: "share-url", href: s.share.url, target: "_blank", rel: "noopener" }, s.share.url.replace(/^https:\/\//, "")),
+      h("p", { class: "why" }, `URL を知っていれば誰でも開ける ・ あと ${left} 分で自動で止まる`),
+      h("div", { class: "btns" },
+        h("button", {
+          type: "button", class: "btn",
+          onclick: () => navigator.clipboard?.writeText(s.share.url).then(() => toast("外向きの URL をコピーした"), () => toast("コピーできなかった")),
+        }, "URL をコピー"),
+        h("button", {
+          type: "button", class: "btn bad",
+          onclick: (ev) => {
+            ev.currentTarget.disabled = true;
+            act(() => api("POST", `/api/servers/${s.name}/unshare`), "外への公開を止めた").catch(() => {});
+          },
+        }, "止める")));
+  }
+  if (!run) return h("p", { class: "why" }, "動いているときだけ外に出せる");
+  return h("div", { class: "share-box" },
+    h("button", {
+      type: "button", class: "btn wide",
+      onclick: (ev) => {
+        if (!confirm(`${s.name} を、誰でも開ける URL で外に出す?\n1 時間で自動で止まる。`)) return;
+        const b = ev.currentTarget;
+        b.disabled = true;
+        b.textContent = "URL を作っています…(30 秒ほど)";
+        act(() => api("POST", `/api/servers/${s.name}/share?minutes=60`), "外に公開した")
+          .then((r) => r?.url && navigator.clipboard?.writeText(r.url).then(() => toast("外に公開した。URL をコピーした"), () => {}))
+          .catch((e) => (errors[s.name] = e.message));
+      },
+    }, svg("globe"), "外に公開する(1 時間)"));
 }
 
 // ---- 全体 ----

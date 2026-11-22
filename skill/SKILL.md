@@ -23,6 +23,7 @@ srv logs <名前>                              # tmux の最後の行
 srv stop|start|restart <名前>                # stop は公開も外す(start で同じ URL に戻る)
 srv rm <名前>                                # 止めて、公開を外して、台帳から消す
 srv fav <名前> [--off]                       # お気に入り(画面の最初のタブ)
+srv share <名前> [--minutes 60] [--off]      # trycloudflare で外に公開(時間で自動で止まる)
 ```
 
 `srv add` は次をまとめてやる。最後の行に URL を出す。
@@ -55,6 +56,14 @@ srv fav <名前> [--off]                       # お気に入り(画面の最初
 cd ~/src/my-game
 srv add my-game --port 5274 --note "ゲームの試作" -- npx vite --port 5274 --strictPort
 ```
+
+## 外に公開する(tailnet の外の人に見せる)
+
+ユーザーに「外から見られるようにして」「URL を人に渡したい」と頼まれたら、`cloudflared tunnel` を自分で立てずに `srv share <名前>` を使う。
+- 出てきた `https://….trycloudflare.com` をそのまま返す
+- 何分で止まるかを添える(既定 60 分、`--minutes` で変えられる)
+- 誰でも開けることを一言添える
+- 頼まれていないのに外へ出さない。ファイルを消せる画面など、危ないものは出す前にユーザーに確かめる
 
 ## してはいけないこと
 

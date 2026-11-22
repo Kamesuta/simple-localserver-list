@@ -10,6 +10,7 @@ import meta  # noqa: E402
 import registry  # noqa: E402
 import runner  # noqa: E402
 import scan  # noqa: E402
+import share  # noqa: E402
 
 SERVE = {
     "TCP": {"443": {"HTTPS": True}, "5190": {"HTTPS": True}, "7443": {"HTTPS": True}, "8443": {"HTTPS": True}},
@@ -189,6 +190,17 @@ class MetaTest(unittest.TestCase):
 
     def test_parse_html_none(self):
         self.assertEqual(meta.parse_html("<p>hi</p>"), ("", ""))
+
+
+class ShareTest(unittest.TestCase):
+    def test_session_name_does_not_clash(self):
+        # 「foo-share」という名前のサーバーがあっても、foo の共有と取り違えない
+        self.assertEqual(share.session("foo"), "srvshare-foo")
+        self.assertNotEqual(share.session("foo"), runner.session_name("foo-share"))
+
+    def test_url_pattern(self):
+        log = '{"message":"|  https://kidney-genre-given-knit.trycloudflare.com  |"}'
+        self.assertEqual(share.URL_RE.search(log).group(0), "https://kidney-genre-given-knit.trycloudflare.com")
 
 
 class RunnerTest(unittest.TestCase):

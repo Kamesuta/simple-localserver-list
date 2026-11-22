@@ -139,6 +139,9 @@ def start(name: str) -> dict:
 def stop(name: str) -> bool:
     """tmux を止めて、公開も外す。https ポートは台帳に残るので、また起動すれば同じ URL で開ける。
     公開を残すと、次の起動で tailscale が番号を先に持っていて落ちる(start の説明)。"""
+    import share  # share は runner を使うので、ここで読む
+
+    share.stop(name)  # 外への公開も止める(宛先が無いのに出し続けない)
     if not has_session(name):
         return False
     _tmux("kill-session", "-t", f"={session_name(name)}")

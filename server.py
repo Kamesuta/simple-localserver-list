@@ -3,7 +3,7 @@
 127.0.0.1:7440 だけで待ち、外へは tailscale serve(https :7463)で tailnet の中にだけ出す。
 起動すると自分の公開も張る。ログイン時に ログイン時のスクリプト の start_tmux から立つ。
 
-画面からできるのは、台帳にある行の 起動・停止・再起動・削除・ログ・お気に入り と、
+画面からできるのは、台帳にある行の 起動・停止・再起動・削除・ログ・お気に入り・外に公開(trycloudflare)と、
 スキャンで見つけたものの 登録(下書き)・死んだ公開を外す だけ。
 コマンドを書き換える入口は作らない(任意のコマンドを実行させないため。直すのは srv add か Claude に頼む)。
 """
@@ -16,7 +16,7 @@ import time
 from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -24,13 +24,14 @@ import meta  # noqa: E402
 import registry  # noqa: E402
 import runner  # noqa: E402
 import scan  # noqa: E402
+import share  # noqa: E402
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("SLL_PORT", "7440"))
 HTTPS_PORT = int(os.environ.get("SLL_HTTPS_PORT", "7463"))
 WEB = Path(__file__).resolve().parent / "web"
 
-ROUTE = re.compile(r"^/api/servers/([a-z0-9][a-z0-9_-]{0,39})(?:/(start|stop|restart|logs|favorite|unfavorite))?$")
+ROUTE = re.compile(r"^/api/servers/([a-z0-9][a-z0-9_-]{0,39})(?:/(start|stop|restart|logs|favorite|unfavorite|share|unshare))?$")
 # お気に入り以外で、これだけ止まっていたら「片付け」に出す
 STALE_DAYS = float(os.environ.get("SLL_STALE_DAYS", "3"))
 
@@ -50,6 +51,7 @@ def view() -> dict:
     last = registry.touch_last_up([s["name"] for s in servers if s["state"] in ("up", "partial")], now)
     ports = [s["port"] for s in servers if s.get("running")] + [u["port"] for u in snap["unregistered"]]
     infos = meta.many(ports)
+    shares = share.all_status()
     for s in servers:
         seen = max(last.get(s["name"], 0.0), _created(s))
         s["last_up"] = seen
@@ -57,6 +59,7 @@ def view() -> dict:
         mi = infos.get(s["port"]) if s.get("running") else None
         s["title"] = mi["title"] if mi else ""
         s["icon"] = bool(mi and mi["icon"])
+        s["share"] = shares.get(s["name"])
     for u in snap["unregistered"]:
         mi = infos.get(u["port"])
         u["title"] = mi["title"] if mi else ""
@@ -195,6 +198,12 @@ class Handler(SimpleHTTPRequestHandler):
         m = ROUTE.match(path)
         if m and m.group(2) == "start":
             return self._handle(lambda: runner.start(m.group(1)))
+        if m and m.group(2) == "share":
+            q = parse_qs(urlparse(self.path).query)
+            minutes = int((q.get("minutes") or [share.DEFAULT_MINUTES])[0])
+            return self._handle(lambda: share.start(m.group(1), minutes))
+        if m and m.group(2) == "unshare":
+            return self._handle(lambda: {"ok": True, "stopped": share.stop(m.group(1))})
         if m and m.group(2) in ("favorite", "unfavorite"):
             return self._handle(lambda: {"ok": True, "entry": registry.set_favorite(m.group(1), m.group(2) == "favorite")})
         if m and m.group(2) in ("stop", "restart"):
