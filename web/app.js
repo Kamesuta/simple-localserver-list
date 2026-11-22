@@ -30,6 +30,9 @@ let seenNew = Number(store.get("seenNew", "0")); // 新規のタブを最後に�
 let seenShown = seenNew; // 今開いている新規のタブで「新しい」と色を付ける境目
 const errors = {}; // 名前 → 最後の失敗(ログの最後つき)
 let sheet = null; // { name, key }
+let reorder = false; // お気に入りを並べ替えている間(タイルが揺れている間)は true。描き直さない
+let holding = null; // 長押し中のタイル(このまま動かせば並べ替えに入る)
+let drag = null; // つかんで動かしているタイル { t, dx, dy, before }
 
 // ---- 小さな道具 ----
 function h(tag, attrs = {}, ...kids) {
@@ -137,18 +140,49 @@ async function launch(s) {
     openSheet(s.name);
   }
 }
-function wireOpen(a, s) {
-  // 長押しはシート(iOS のリンクのプレビューは CSS の -webkit-touch-callout で止めてある)
+function wireOpen(a, s, onHoldMove = null) {
+  // 長押しはシート(iOS のリンクのプレビューは CSS の -webkit-touch-callout で止めてある)。
+  // onHoldMove があるとき(お気に入りのタイル)は iPhone のホーム画面と同じで、
+  // 長押しして離せばシート、長押ししたまま動かせば並べ替えに入る。
   let timer = 0;
   let long = false;
+  let start = null;
   const cancel = () => clearTimeout(timer);
-  a.addEventListener("pointerdown", () => {
+  a.addEventListener("pointerdown", (ev) => {
+    if (reorder) return;
     long = false;
-    timer = setTimeout(() => { long = true; openSheet(s.name); }, 500);
+    start = { x: ev.clientX, y: ev.clientY };
+    timer = setTimeout(() => {
+      long = true;
+      if (!onHoldMove) return openSheet(s.name);
+      holding = a.closest(".tile");
+      holding?.classList.add("held");
+    }, 500);
   });
-  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) a.addEventListener(ev, cancel);
+  a.addEventListener("pointermove", (ev) => {
+    if (!holding || holding !== a.closest(".tile") || !start) return;
+    if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 8) return;
+    const t = holding;
+    t.classList.remove("held");
+    holding = null;
+    onHoldMove(t, ev);
+  });
+  a.addEventListener("pointerup", () => {
+    cancel();
+    if (holding && holding === a.closest(".tile")) {
+      holding.classList.remove("held");
+      holding = null;
+      openSheet(s.name);
+    }
+  });
+  a.addEventListener("pointercancel", () => { cancel(); holding?.classList.remove("held"); holding = null; });
+  a.addEventListener("pointerleave", () => { if (!holding) cancel(); });
   a.addEventListener("contextmenu", (ev) => ev.preventDefault());
+  // リンクや画像をブラウザが自分で引きずり始めると pointercancel になり、並べ替えに入れない
+  a.draggable = false;
+  a.addEventListener("dragstart", (ev) => ev.preventDefault());
   a.addEventListener("click", (ev) => {
+    if (reorder) { ev.preventDefault(); return; }
     if (long) { ev.preventDefault(); long = false; return; }
     if (s.state !== "up") {
       ev.preventDefault();
@@ -184,25 +218,98 @@ function confirmDelete(s) {
 }
 
 // ---- お気に入り ----
+function favList(servers) {
+  const order = snap?.fav_order || [];
+  const pos = (s) => { const i = order.indexOf(s.name); return i < 0 ? Infinity : i; };
+  return servers.filter((s) => s.favorite).sort((a, b) => (pos(a) - pos(b)) || a.name.localeCompare(b.name));
+}
 function renderFav(servers) {
-  const favs = servers.filter((s) => s.favorite)
-    .sort((a, b) => (running(b) - running(a)) || a.name.localeCompare(b.name));
+  const favs = favList(servers);
   if (!favs.length) {
     return [h("div", { class: "empty" },
       h("b", {}, "お気に入りはまだ無い"), h("br"),
       "新規のタブで ★ を押すと、ここにタイルで並ぶ。")];
   }
-  return [h("div", { class: "grid" }, favs.map((s) => {
+  const grid = h("div", { class: "grid", id: "fav-grid" }, favs.map((s) => {
     const st = STATE[s.state] + (running(s) ? "" : " ・ 押すと起動");
-    return h("div", { class: `tile ${running(s) ? "" : "off"}` },
+    return h("div", { class: `tile ${running(s) ? "" : "off"}`, "data-name": s.name },
       moreBtn(s, "more"),
       wireOpen(h("a", { href: s.url, target: "_blank", rel: "noopener" },
         ico(s),
-        h("div", {}, h("div", { class: "nm" }, s.name), h("div", { class: "sub" }, subText(s) || " ")),
+        h("div", {}, h("div", { class: "nm" }, s.name), h("div", { class: "sub" }, subText(s) || " ")),
         s.share && h("div", {}, shareChip(s)),
         h("div", { class: "foot" }, h("span", { class: `dot ${s.state}` }), h("span", { class: "st" }, st),
-          h("span", { class: "port" }, `:${s.https_port}`))), s));
-  }))];
+          h("span", { class: "port" }, `:${s.https_port}`))), s,
+      (t, ev) => { setReorder(true); startDrag(t, ev); }));
+  }));
+  wireDrag(grid);
+  return [grid];
+}
+// 並べ替えの出入りは DOM を作り直さず、印(class)だけ付け替える(つかんでいる指を離さないため)
+function setReorder(on) {
+  if (reorder === on) return;
+  reorder = on;
+  if (on && sheet) closeSheet();
+  $("fav-grid")?.classList.toggle("editing", on);
+  $("done").hidden = !on;
+  $("refresh").hidden = on;
+  $("sub").textContent = on ? "つかんで動かす ・ 何もない所を押すと終わる" : TABS[tab].sub();
+  if (!on) render();
+}
+function gridOrder() {
+  return [...document.querySelectorAll("#fav-grid .tile")].map((t) => t.dataset.name);
+}
+function saveOrder(names) {
+  snap.fav_order = names; // 画面の並びはもう変わっているので、保存は裏で
+  fetch("/api/fav-order", {
+    method: "POST", headers: { "X-SLL": "1", "Content-Type": "application/json" },
+    body: JSON.stringify({ order: names }),
+  }).then((r) => r.ok || r.json().then((b) => toast(`並び順を保存できなかった: ${b.error || r.status}`)))
+    .catch((e) => toast(`並び順を保存できなかった: ${e.message}`));
+}
+function startDrag(t, ev) {
+  const grid = $("fav-grid");
+  const r = t.getBoundingClientRect();
+  drag = { t, dx: ev.clientX - r.left, dy: ev.clientY - r.top, before: gridOrder().join() };
+  t.classList.add("dragging");
+  try { grid.setPointerCapture(ev.pointerId); } catch { /* 指がもう離れている */ }
+  follow(ev);
+}
+// つかんだタイルを指に付いてこさせ、指の下のタイルと入れ替える
+function follow(ev) {
+  const t = drag.t;
+  const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest("#fav-grid .tile");
+  if (over && over !== t) {
+    const tiles = [...t.parentNode.children];
+    if (tiles.indexOf(t) < tiles.indexOf(over)) over.after(t);
+    else over.before(t);
+  }
+  t.style.transform = "none";
+  const r = t.getBoundingClientRect();
+  t.style.transform = `translate(${ev.clientX - drag.dx - r.left}px, ${ev.clientY - drag.dy - r.top}px) scale(1.06)`;
+}
+function wireDrag(grid) {
+  grid.addEventListener("pointerdown", (ev) => {
+    const t = ev.target.closest(".tile");
+    if (!reorder) return;
+    if (!t) return setReorder(false); // 揺れている間に何もない所を押したら終わる
+    if (ev.button > 0) return;
+    ev.preventDefault();
+    startDrag(t, ev);
+  });
+  grid.addEventListener("pointermove", (ev) => drag && follow(ev));
+  const end = () => {
+    if (!drag) return;
+    drag.t.classList.remove("dragging");
+    drag.t.style.transform = "";
+    const names = gridOrder();
+    if (names.join() !== drag.before) saveOrder(names);
+    drag = null;
+  };
+  grid.addEventListener("pointerup", end);
+  grid.addEventListener("pointercancel", end);
+  // 長押しのあと・つかんでいる間は、指を動かしてもページをスクロールさせない(iOS は touchmove で止める)
+  grid.addEventListener("touchmove", (ev) => { if (holding || drag) ev.preventDefault(); }, { passive: false });
 }
 
 // ---- 新規 ----
@@ -415,6 +522,7 @@ function markNewSeen() {
 }
 function setTab(t) {
   if (tab === "new" && t !== "new") seenShown = seenNew; // 新規を離れたら色付けを消す
+  setReorder(false);
   tab = t;
   store.set("tab", t);
   if (t === "new") markNewSeen();
@@ -428,8 +536,9 @@ function render() {
   if (!snap) return;
   const servers = snap.servers.filter((s) => !s.broken);
   $("h1").textContent = TABS[tab].h1;
-  $("sub").textContent = TABS[tab].sub();
-  if (tab === "fav") $("fav").replaceChildren(...renderFav(servers));
+  if (!reorder) $("sub").textContent = TABS[tab].sub();
+  // 並べ替えの最中と長押しの最中は描き直さない(つかんでいるタイルが消えるため)。完了で描き直す
+  if (tab === "fav" && !reorder && !holding) $("fav").replaceChildren(...renderFav(servers));
   if (tab === "new") $("new").replaceChildren(...renderNew(servers));
   if (tab === "tidy") $("tidy").replaceChildren(...renderTidy());
 
@@ -477,7 +586,14 @@ async function load(force = false) {
 setupTheme();
 for (const b of document.querySelectorAll(".tabs button")) b.addEventListener("click", () => setTab(b.dataset.tab));
 $("refresh").addEventListener("click", () => load(true));
-document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && sheet) closeSheet(); });
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Escape") return;
+  if (sheet) closeSheet();
+  else setReorder(false);
+});
+$("done").addEventListener("click", () => setReorder(false));
+// 揺れている間に、タイルの外(余白や上の帯)を押しても終わる
+document.addEventListener("pointerdown", (ev) => { if (reorder && !ev.target.closest("#fav-grid .tile, #done")) setReorder(false); });
 document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && load());
 setInterval(() => {
   if (loadedAt) $("ago").textContent = `${Math.round((Date.now() - loadedAt) / 1000)} 秒前`;

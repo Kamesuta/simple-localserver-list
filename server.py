@@ -66,6 +66,7 @@ def view() -> dict:
         u["icon"] = bool(mi and mi["icon"])
     snap["now"] = now
     snap["stale_days"] = STALE_DAYS
+    snap["fav_order"] = registry.load_fav_order()
     return snap
 
 
@@ -180,6 +181,18 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send(404, {"error": "無い"})
         return super().do_GET()
 
+    def _json_body(self) -> dict:
+        n = int(self.headers.get("Content-Length") or 0)
+        if n <= 0 or n > 32768:
+            raise registry.RegistryError("本文が無いか大きすぎる")
+        try:
+            data = json.loads(self.rfile.read(n))
+        except ValueError:
+            raise registry.RegistryError("本文が JSON でない")
+        if not isinstance(data, dict):
+            raise registry.RegistryError("本文は {\"order\": [...]} の形で")
+        return data
+
     def do_POST(self):
         if not self._guard():
             return
@@ -197,6 +210,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self._handle(lambda: {"ok": True, "entry": registry.set_favorite(m.group(1), m.group(2) == "favorite")})
         if m and m.group(2) in ("stop", "restart"):
             return self._handle(lambda: stop_or_restart(m.group(1), m.group(2) == "restart"))
+        if path == "/api/fav-order":
+            return self._handle(lambda: {"ok": True, "order": registry.save_fav_order(self._json_body().get("order"))})
         m2 = re.match(r"^/api/adopt/(\d{1,5})$", path)
         if m2:
             return self._handle(lambda: {"ok": True, "entry": adopt(int(m2.group(1)))})

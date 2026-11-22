@@ -165,6 +165,39 @@ def set_favorite(name: str, on: bool) -> dict:
     return save(e)
 
 
+# ---- お気に入りの並び順 ----
+# 名前の並びを 1 つのファイルに持つ(並べ替えのたびに台帳を何枚も書き直さないため)。
+# ここに無いお気に入りは、並びの最後に名前の順で付く。
+
+def _order_file() -> Path:
+    home().mkdir(parents=True, exist_ok=True)
+    return home() / "fav_order.json"
+
+
+def load_fav_order() -> list[str]:
+    try:
+        data = json.loads(_order_file().read_text())
+    except (OSError, ValueError):
+        return []
+    return [n for n in data if isinstance(n, str)] if isinstance(data, list) else []
+
+
+def save_fav_order(names) -> list[str]:
+    if not isinstance(names, list) or len(names) > 500:
+        raise RegistryError("並び順は名前のリストで渡すこと")
+    out = []
+    for n in names:
+        if not isinstance(n, str) or not NAME_RE.match(n):
+            raise RegistryError(f"名前が変: {n!r}")
+        if n not in out:
+            out.append(n)
+    f = _order_file()
+    tmp = f.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(out, ensure_ascii=False))
+    tmp.replace(f)
+    return out
+
+
 # ---- 最後に動いていた時刻(「長く止まっている」の判定に使う)----
 # 台帳とは別のファイル。画面の読み直しのたびに書くので、台帳の 1 枚 1 枚は汚さない。
 

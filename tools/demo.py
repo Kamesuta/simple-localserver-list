@@ -40,12 +40,16 @@ def srv(name, port, note, state, created, by, fav=False, draft=False, cmd="npm r
     }
 
 
+FAV_ORDER: list[str] = []  # デモでは並び順を覚えるだけ(ファイルには書かない)
+
+
 def snapshot() -> dict:
     now = time.time()
     return {
         "host": HOST,
         "now": now,
         "stale_days": 3,
+        "fav_order": FAV_ORDER,
         "servers": [
             srv("my-blog", 4321, "ブログの下書きプレビュー", "up", ago(days=12), "blog", fav=True, cmd="npx astro dev --port 4321"),
             srv("api-docs", 8000, "社内 API のドキュメント", "up", ago(days=30), "docs-site", fav=True, cmd="mkdocs serve -a 127.0.0.1:8000"),
@@ -100,6 +104,9 @@ class DemoHandler(server.Handler):
         return super().do_GET()
 
     def do_POST(self):
+        if self.path == "/api/fav-order":
+            FAV_ORDER[:] = [n for n in self._json_body().get("order", []) if isinstance(n, str)]
+            return self._send(200, {"ok": True, "order": FAV_ORDER})
         return self._send(200, {"ok": True, "message": "デモなので何もしない"})
 
     def do_DELETE(self):

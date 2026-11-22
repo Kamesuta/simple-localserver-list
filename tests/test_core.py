@@ -186,6 +186,15 @@ class FavoriteAndLastUpTest(unittest.TestCase):
         with self.assertRaises(registry.RegistryError):
             registry.set_favorite("nope", True)
 
+    def test_fav_order(self):
+        self.assertEqual(registry.load_fav_order(), [])
+        self.assertEqual(registry.save_fav_order(["b", "a", "b"]), ["b", "a"])
+        self.assertEqual(registry.load_fav_order(), ["b", "a"])
+        with self.assertRaises(registry.RegistryError):
+            registry.save_fav_order(["../x"])
+        with self.assertRaises(registry.RegistryError):
+            registry.save_fav_order("a")
+
     def test_last_up_writes_at_most_every_minute(self):
         d = registry.touch_last_up(["a"], now=1000)
         self.assertEqual(d["a"], 1000)

@@ -102,6 +102,16 @@ svg path, svg circle, svg rect { fill: none; stroke: currentColor; stroke-width:
 .tile .nm, .tile .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile .foot { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); min-width: 0; }
 .tile .foot .st { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 並べ替え(iPhone のホーム画面と同じ: 長押しして動かす → 揺れる → 完了) */
+.done-btn { flex-shrink: 0; height: 36px; margin-right: 6px; padding: 0 14px; border: 0; border-radius: 18px; background: var(--accent-bg); color: var(--accent); font: inherit; font-size: 14px; font-weight: 600; }
+.tile.held { transform: scale(1.04); box-shadow: 0 6px 18px rgba(0, 0, 0, .16); transition: transform .15s, box-shadow .15s; }
+.editing .tile { touch-action: none; cursor: grab; animation: jiggle .28s ease-in-out infinite alternate; }
+.editing .tile:nth-child(2n) { animation-delay: -.14s; animation-direction: alternate-reverse; }
+.editing .tile .more { visibility: hidden; }
+.editing .tile > a { pointer-events: none; }
+.editing .tile.dragging { animation: none; cursor: grabbing; z-index: 3; pointer-events: none; box-shadow: 0 10px 26px rgba(0, 0, 0, .22); }
+@keyframes jiggle { from { transform: rotate(-1.2deg); } to { transform: rotate(1.2deg); } }
+@media (prefers-reduced-motion: reduce) { .editing .tile { animation: none; outline: 1px dashed var(--line-strong); } }
 .port { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
 .more {
   position: absolute; top: 4px; right: 4px; width: 40px; height: 40px; border: 0; border-radius: 20px; padding: 0;
@@ -227,7 +237,8 @@ svg path, svg circle, svg rect { fill: none; stroke: currentColor; stroke-width:
 }
 
 /* 長押しはシートを出すので、iOS のリンクのプレビューと文字の選択を止める */
-.tile > a, .row > a { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.tile > a, .row > a { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
+.tile img, .row img { -webkit-user-drag: none; }
 
 /* 外に公開(trycloudflare)*/
 .chip.share { gap: 4px; background: var(--accent-bg); color: var(--accent); border-color: transparent; }
