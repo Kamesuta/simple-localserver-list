@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""srv — サーバーを「起動のしかた」ごと台帳に登録し、tmux で立てて tailscale serve で出す。
+
+  srv add <名前> --port P [--https-port H] [--cwd D] [--env K=V]... [--env-file F]
+          [--path /] [--note メモ] [--autostart] [--no-start] -- <コマンド…>
+  srv start|stop|restart <名前>
+  srv rm <名前>            止めて、公開を外して、台帳から消す
+  srv ls [--json]          状態つきの一覧(🟢 動いている / 🟡 公開なし / 🔴 落ちた / ⚪ 止まっている)
+  srv logs <名前> [-n 60]  tmux の最後の行
+  srv autostart            autostart のものを全部立てる(ログイン時に ログイン時のスクリプト から)
+  srv port                 空いているポートを 1 つ出す
+  srv attach <名前>        tmux に入る(抜けるのは Ctrl-b d)
+
+一覧の画面: https://<この Mac>:7463/
+"""
+import argparse
+import json
+import os
+import shlex
+import socket
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import registry  # noqa: E402
+import runner  # noqa: E402
+import scan  # noqa: E402
+
+MARK = {"up": "🟢", "partial": "🟡", "starting": "⏳", "crashed": "🔴", "down": "⚪", "broken": "❌"}
+
+
+def die(msg: str, code: int = 1):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def cmd_add(a):
+    if not a.command:
+        die("-- のあとに起動コマンドを書くこと(例: srv add web --port 5190 -- npm run dev)")
+    command = a.command[0] if len(a.command) == 1 else shlex.join(a.command)
+    env = {}
+    for kv in a.env or []:
+        k, sep, v = kv.partition("=")
+        if not sep:
+            die(f"--env は K=V の形で: {kv}")
+        env[k] = v
+    old = registry.load(a.name)
+    entry = {
+        "name": a.name,
+        "cwd": str(Path(a.cwd or os.getcwd()).expanduser().resolve()),
+        "command": command,
+        "env": env,
+        "env_file": str(Path(a.env_file).expanduser().resolve()) if a.env_file else "",
+        "port": a.port,
+        "https_port": a.https_port or a.port,
+        "path": a.path,
+        "note": a.note or (old or {}).get("note", ""),
+        "autostart": a.autostart,
+        "draft": False,
+        "registered_by": a.by or os.environ.get("CLAUDE_SESSION_NAME", "") or (old or {}).get("registered_by", ""),
+    }
+    if old:
+        entry["created_at"] = old.get("created_at")
+    try:
+        e = registry.save(entry)
+    except registry.RegistryError as ex:
+        die(str(ex))
+    print(("登録し直した" if old else "登録した") + f": {e['name']}")
+    if a.no_start:
+        return
+    if old and runner.has_session(a.name):
+        runner.stop(a.name)
+    _start(a.name)
+
+
+def _url(e: dict) -> str:
+    host = scan.dns_name()
+    return f"https://{host}:{e['https_port']}{e['path']}" if host else ""
+
+
+def _start(name: str):
+    try:
+        r = runner.start(name)
+    except (runner.RunError, registry.RegistryError) as ex:
+        die(str(ex))
+    print(r["message"], file=sys.stdout if r["ok"] else sys.stderr, flush=True)
+    if not r["ok"]:
+        if r.get("logs"):
+            print("---- ログの最後 ----\n" + r["logs"], file=sys.stderr)
+        sys.exit(1)
+    print(_url(registry.load(name)))
+
+
+def cmd_start(a):
+    _start(a.name)
+
+
+def cmd_stop(a):
+    if runner.stop(a.name):
+        print("止めた")
+        return
+    e = registry.load(a.name)
+    if e and runner.port_owner(e["port"]):
+        die("srv の外で動いているので止めない(立てたところで止めること)")
+    print("動いていない")
+
+
+def cmd_restart(a):
+    runner.stop(a.name)
+    _start(a.name)
+
+
+def cmd_rm(a):
+    try:
+        r = runner.remove(a.name)
+    except runner.RunError as ex:
+        die(str(ex))
+    print(f"消した: {a.name}(公開 :{r['unpublished']} も外した)")
+
+
+def cmd_ls(a):
+    snap = scan.snapshot()
+    if a.json:
+        print(json.dumps(snap, ensure_ascii=False, indent=2))
+        return
+    if not snap["servers"]:
+        print("(台帳は空)")
+    for s in snap["servers"]:
+        if s.get("broken"):
+            print(f"❌ {s['name']}  台帳が壊れている: {s['broken']}")
+            continue
+        flags = []
+        if s["state"] == "partial":
+            flags.append("公開なし")
+        elif s["state"] == "crashed":
+            flags.append("落ちた。srv logs で見る")
+        if s["draft"]:
+            flags.append("下書き")
+        if s["autostart"]:
+            flags.append("自動起動")
+        extra = f"  [{' / '.join(flags)}]" if flags else ""
+        print(f"{MARK[s['state']]} {s['name']:<20} {s['url'] or ':' + str(s['https_port'])}{extra}")
+        if s["note"]:
+            print(f"     {s['note']}")
+    if snap["unregistered"]:
+        print("\n未登録で動いている:")
+        for u in snap["unregistered"]:
+            urls = " ".join(u["urls"])
+            print(f"  :{u['port']:<6} {u['process']:<10} {urls}  ({u['cwd']})")
+    if snap["orphans"]:
+        print("\n公開だけ残っている(宛先が止まっている):")
+        for o in snap["orphans"]:
+            print(f"  :{o['https_port']}{o['path']} → {o['target']}" + ("  [funnel]" if o["funnel"] else ""))
+
+
+def cmd_logs(a):
+    out = runner.logs(a.name, a.n)
+    print(out if out else "(tmux のセッションが無い)")
+
+
+def cmd_autostart(a):
+    bad = 0
+    for e in registry.load_all():
+        if e.get("broken") or not e.get("autostart"):
+            continue
+        try:
+            r = runner.start(e["name"], wait=False)
+            print(f"{e['name']}: {r['message']}")
+        except (runner.RunError, registry.RegistryError) as ex:
+            bad += 1
+            print(f"{e['name']}: {ex}", file=sys.stderr)
+    sys.exit(1 if bad else 0)
+
+
+def cmd_port(a):
+    used = set(scan.listening())
+    used |= set(scan.parse_serve(scan.serve_status()))
+    for e in registry.load_all():
+        used |= {e.get("port"), e.get("https_port")}
+    for p in range(a.start, 65000):
+        if p in used:
+            continue
+        with socket.socket() as s:
+            try:
+                s.bind(("127.0.0.1", p))
+            except OSError:
+                continue
+        print(p)
+        return
+    die("空きが見つからない")
+
+
+def cmd_attach(a):
+    os.execvp("tmux", ["tmux", "attach", "-t", f"={runner.session_name(a.name)}"])
+
+
+def main():
+    p = argparse.ArgumentParser(prog="srv", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("add", help="登録して起動する")
+    s.add_argument("name")
+    s.add_argument("--port", type=int, required=True, help="サーバーが待つローカルのポート")
+    s.add_argument("--https-port", type=int, help="tailnet に出すポート(既定は --port と同じ)")
+    s.add_argument("--cwd", help="ここで起動する(既定は今のフォルダ)")
+    s.add_argument("--env", action="append", metavar="K=V")
+    s.add_argument("--env-file", help="起動前に読む .env(秘密はここに。台帳には場所だけ残る)")
+    s.add_argument("--path", default="/", help="開くパスと、起動の確認に使うパス")
+    s.add_argument("--note", help="一覧に出すメモ")
+    s.add_argument("--autostart", action="store_true", help="ログイン時に立てる")
+    s.add_argument("--no-start", action="store_true", help="登録だけ(もう動いているものを後から登録するとき)")
+    s.add_argument("--by", help="登録したセッションの名前など")
+    s.set_defaults(f=cmd_add)
+
+    for name, f, h in [("start", cmd_start, "起動"), ("stop", cmd_stop, "停止(公開は残す)"),
+                       ("restart", cmd_restart, "再起動"), ("rm", cmd_rm, "止めて公開を外して台帳から消す"),
+                       ("attach", cmd_attach, "tmux に入る")]:
+        s = sub.add_parser(name, help=h)
+        s.add_argument("name")
+        s.set_defaults(f=f)
+
+    s = sub.add_parser("ls", help="一覧")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(f=cmd_ls)
+
+    s = sub.add_parser("logs", help="ログの最後")
+    s.add_argument("name")
+    s.add_argument("-n", type=int, default=60)
+    s.set_defaults(f=cmd_logs)
+
+    s = sub.add_parser("autostart", help="autostart のものを全部立てる")
+    s.set_defaults(f=cmd_autostart)
+
+    s = sub.add_parser("port", help="空いているポートを出す")
+    s.add_argument("--start", type=int, default=7500)
+    s.set_defaults(f=cmd_port)
+
+    # 起動コマンドは -- のあと。argparse の REMAINDER は名前のあとの --port まで飲むので、先に切り分ける
+    argv = sys.argv[1:]
+    command = []
+    if "--" in argv:
+        i = argv.index("--")
+        argv, command = argv[:i], argv[i + 1:]
+    a = p.parse_args(argv)
+    a.command = command
+    try:
+        a.f(a)
+    except registry.RegistryError as ex:
+        die(str(ex))
+
+
+if __name__ == "__main__":
+    main()

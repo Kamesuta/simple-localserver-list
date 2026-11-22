@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#16171a" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>サーバー台帳</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>サーバー台帳</h1>
+  <span id="summary"></span>
+</header>
+
+<main>
+  <section>
+    <ul id="servers" class="rows"></ul>
+    <p id="empty" class="hint" hidden>台帳は空。セッションで <code>srv add 名前 --port P -- コマンド</code> と立てると、ここに並ぶ。</p>
+  </section>
+
+  <section id="unreg-sec" hidden>
+    <h2>未登録で動いている <span class="count" id="unreg-count"></span></h2>
+    <p class="hint">登録すると、拾ったコマンドのまま下書きで台帳に入る。</p>
+    <ul id="unreg" class="rows"></ul>
+  </section>
+
+  <section id="orphan-sec" hidden>
+    <h2>公開だけ残っている <span class="count" id="orphan-count"></span></h2>
+    <p class="hint">tailscale の公開はあるが、宛先が止まっている。</p>
+    <ul id="orphans" class="rows"></ul>
+  </section>
+</main>
+
+<div id="toast" role="status" hidden></div>
+
+<dialog id="logs">
+  <div class="dlg-head"><strong id="logs-title"></strong><button class="ghost" id="logs-close">閉じる</button></div>
+  <pre id="logs-body"></pre>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
