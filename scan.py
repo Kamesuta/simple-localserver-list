@@ -149,7 +149,7 @@ def merge(entries: list[dict], serve: dict[int, list[dict]], listen: dict[int, d
         running = e["port"] in listen
         sname = f"srv-{e['name']}"
         session = sname in sessions
-        # 公開は止めても残すので、止まっている行は公開があっても down
+        # 止まっているのに公開だけ残っている(srv の外で止めたなど)ものも down
         if running:
             state = "up" if published else "partial"
         elif session and stopped(sname):

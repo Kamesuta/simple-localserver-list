@@ -2,11 +2,12 @@
 """srv — サーバーを「起動のしかた」ごと台帳に登録し、tmux で立てて tailscale serve で出す。
 
   srv add <名前> --port P [--https-port H] [--cwd D] [--env K=V]... [--env-file F]
-          [--path /] [--note メモ] [--autostart] [--no-start] -- <コマンド…>
-  srv start|stop|restart <名前>
+          [--path /] [--note メモ] [--fav] [--autostart] [--no-start] -- <コマンド…>
+  srv start|stop|restart <名前>   stop は公開も外す(また start すれば同じ URL)
   srv rm <名前>            止めて、公開を外して、台帳から消す
   srv ls [--json]          状態つきの一覧(🟢 動いている / 🟡 公開なし / 🔴 落ちた / ⚪ 止まっている)
   srv logs <名前> [-n 60]  tmux の最後の行
+  srv fav <名前> [--off]   お気に入りに入れる/外す(画面の最初のタブ)
   srv autostart            autostart のものを全部立てる(ログイン時に ログイン時のスクリプト から)
   srv port                 空いているポートを 1 つ出す
   srv attach <名前>        tmux に入る(抜けるのは Ctrl-b d)
@@ -58,7 +59,10 @@ def cmd_add(a):
         "note": a.note or (old or {}).get("note", ""),
         "autostart": a.autostart,
         "draft": False,
-        "registered_by": a.by or os.environ.get("CLAUDE_SESSION_NAME", "") or (old or {}).get("registered_by", ""),
+        # 登録し直してもお気に入りは消さない
+        "favorite": a.fav or (old or {}).get("favorite", False),
+        # 誰が立てたか。--by が無ければ、前の値か、起動フォルダの名前
+        "registered_by": a.by or (old or {}).get("registered_by", "") or Path(a.cwd or os.getcwd()).name,
     }
     if old:
         entry["created_at"] = old.get("created_at")
@@ -139,6 +143,8 @@ def cmd_ls(a):
             flags.append("下書き")
         if s["autostart"]:
             flags.append("自動起動")
+        if s.get("favorite"):
+            flags.append("★")
         extra = f"  [{' / '.join(flags)}]" if flags else ""
         print(f"{MARK[s['state']]} {s['name']:<20} {s['url'] or ':' + str(s['https_port'])}{extra}")
         if s["note"]:
@@ -154,22 +160,36 @@ def cmd_ls(a):
             print(f"  :{o['https_port']}{o['path']} → {o['target']}" + ("  [funnel]" if o["funnel"] else ""))
 
 
+def cmd_fav(a):
+    try:
+        registry.set_favorite(a.name, not a.off)
+    except registry.RegistryError as ex:
+        die(str(ex))
+    print(("お気に入りから外した: " if a.off else "お気に入りに入れた: ") + a.name)
+
+
 def cmd_logs(a):
     out = runner.logs(a.name, a.n)
     print(out if out else "(tmux のセッションが無い)")
 
 
 def cmd_autostart(a):
-    bad = 0
-    for e in registry.load_all():
-        if e.get("broken") or not e.get("autostart"):
-            continue
+    # 返事を待ってから公開するので、全部を同時に立てて待つ
+    from concurrent.futures import ThreadPoolExecutor
+
+    names = [e["name"] for e in registry.load_all() if not e.get("broken") and e.get("autostart")]
+
+    def one(name):
         try:
-            r = runner.start(e["name"], wait=False)
-            print(f"{e['name']}: {r['message']}")
+            return name, runner.start(name)
         except (runner.RunError, registry.RegistryError) as ex:
-            bad += 1
-            print(f"{e['name']}: {ex}", file=sys.stderr)
+            return name, {"ok": False, "message": str(ex)}
+
+    bad = 0
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for name, r in pool.map(one, names):
+            print(f"{name}: {r['message']}", file=sys.stdout if r["ok"] else sys.stderr)
+            bad += 0 if r["ok"] else 1
     sys.exit(1 if bad else 0)
 
 
@@ -210,15 +230,21 @@ def main():
     s.add_argument("--note", help="一覧に出すメモ")
     s.add_argument("--autostart", action="store_true", help="ログイン時に立てる")
     s.add_argument("--no-start", action="store_true", help="登録だけ(もう動いているものを後から登録するとき)")
-    s.add_argument("--by", help="登録したセッションの名前など")
+    s.add_argument("--fav", action="store_true", help="お気に入りに入れる(画面の最初のタブに出る)")
+    s.add_argument("--by", help="登録したセッションやプロジェクトの名前(既定は起動フォルダの名前)")
     s.set_defaults(f=cmd_add)
 
-    for name, f, h in [("start", cmd_start, "起動"), ("stop", cmd_stop, "停止(公開は残す)"),
+    for name, f, h in [("start", cmd_start, "起動"), ("stop", cmd_stop, "停止(公開も外す)"),
                        ("restart", cmd_restart, "再起動"), ("rm", cmd_rm, "止めて公開を外して台帳から消す"),
                        ("attach", cmd_attach, "tmux に入る")]:
         s = sub.add_parser(name, help=h)
         s.add_argument("name")
         s.set_defaults(f=f)
+
+    s = sub.add_parser("fav", help="お気に入りに入れる(--off で外す)")
+    s.add_argument("name")
+    s.add_argument("--off", action="store_true")
+    s.set_defaults(f=cmd_fav)
 
     s = sub.add_parser("ls", help="一覧")
     s.add_argument("--json", action="store_true")

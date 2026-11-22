@@ -25,6 +25,7 @@ FIELDS = {
     "note": str,
     "autostart": bool,
     "draft": bool,
+    "favorite": bool,
     "registered_by": str,
     "created_at": str,
 }
@@ -73,6 +74,7 @@ def normalize(entry: dict) -> dict:
     e.setdefault("note", "")
     e.setdefault("autostart", False)
     e.setdefault("draft", False)
+    e.setdefault("favorite", False)
     e.setdefault("registered_by", "")
     e.setdefault("created_at", time.strftime("%Y-%m-%dT%H:%M:%S"))
     for k, t in FIELDS.items():
@@ -127,3 +129,43 @@ def remove(name: str) -> bool:
         f.unlink()
         return True
     return False
+
+
+def set_favorite(name: str, on: bool) -> dict:
+    e = load(name)
+    if not e:
+        raise RegistryError(f"台帳に無い: {name}")
+    e["favorite"] = bool(on)
+    return save(e)
+
+
+# ---- 最後に動いていた時刻(「長く止まっている」の判定に使う)----
+# 台帳とは別のファイル。画面の読み直しのたびに書くので、台帳の 1 枚 1 枚は汚さない。
+
+def _state_file() -> Path:
+    home().mkdir(parents=True, exist_ok=True)
+    return home() / "last_up.json"
+
+
+def load_last_up() -> dict[str, float]:
+    try:
+        return {k: float(v) for k, v in json.loads(_state_file().read_text()).items()}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def touch_last_up(names: list[str], now: float | None = None, every: float = 60.0) -> dict[str, float]:
+    """動いている名前の時刻を今にする。書くのは 1 分に 1 回まで。"""
+    now = now or time.time()
+    data = load_last_up()
+    changed = False
+    for n in names:
+        if now - data.get(n, 0) >= every:
+            data[n] = now
+            changed = True
+    if changed:
+        f = _state_file()
+        tmp = f.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data))
+        tmp.replace(f)
+    return data

@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import meta  # noqa: E402
 import registry  # noqa: E402
 import runner  # noqa: E402
 import scan  # noqa: E402
@@ -146,6 +147,48 @@ class ScanTest(unittest.TestCase):
         self.assertNotIn((5190, "/"), orphans)  # 台帳にある
         admin = [o for o in m["orphans"] if o["path"] == "/admin"][0]
         self.assertTrue(admin["protected"])
+
+
+class FavoriteAndLastUpTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        os.environ["SLL_HOME"] = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+        os.environ.pop("SLL_HOME", None)
+
+    def test_favorite(self):
+        registry.save({"name": "a", "command": "a", "port": 5000})
+        self.assertFalse(registry.load("a")["favorite"])
+        registry.set_favorite("a", True)
+        self.assertTrue(registry.load("a")["favorite"])
+        with self.assertRaises(registry.RegistryError):
+            registry.set_favorite("nope", True)
+
+    def test_last_up_writes_at_most_every_minute(self):
+        d = registry.touch_last_up(["a"], now=1000)
+        self.assertEqual(d["a"], 1000)
+        d = registry.touch_last_up(["a"], now=1030)
+        self.assertEqual(d["a"], 1000)  # 1 分たっていない
+        d = registry.touch_last_up(["a", "b"], now=1070)
+        self.assertEqual((d["a"], d["b"]), (1070, 1070))
+        self.assertEqual(registry.load_last_up()["b"], 1070)
+
+
+class MetaTest(unittest.TestCase):
+    def test_parse_html(self):
+        html = """<html><head><title>
+          Git &amp; Graph </title>
+          <link rel="icon" href="/favicon.png">
+          <link rel='apple-touch-icon' href=icons/icon-180.png>
+        </head></html>"""
+        title, icon = meta.parse_html(html)
+        self.assertEqual(title, "Git & Graph")
+        self.assertEqual(icon, "icons/icon-180.png")  # 大きい apple-touch-icon を選ぶ
+
+    def test_parse_html_none(self):
+        self.assertEqual(meta.parse_html("<p>hi</p>"), ("", ""))
 
 
 class RunnerTest(unittest.TestCase):

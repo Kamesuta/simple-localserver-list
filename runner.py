@@ -49,7 +49,7 @@ def port_owner(port: int) -> dict | None:
     return scan.listening().get(port)
 
 
-def wait_ready(e: dict, timeout: float = 15.0) -> bool:
+def wait_ready(e: dict, timeout: float = 30.0) -> bool:
     url = f"http://127.0.0.1:{e['port']}{e['path']}"
     end = time.time() + timeout
     while time.time() < end:
@@ -61,7 +61,8 @@ def wait_ready(e: dict, timeout: float = 15.0) -> bool:
             return True
         except (urllib.error.URLError, OSError):
             pass
-        if not has_session(e["name"]):
+        # tmux が消えた・コマンドが終わって「止まった」の印が出たら、それ以上待たない
+        if not has_session(e["name"]) or scan.pane_stopped(session_name(e["name"])):
             return False
         time.sleep(0.5)
     return False
@@ -100,8 +101,12 @@ def logs(name: str, lines: int = 60) -> str:
     return r.stdout.rstrip()
 
 
-def start(name: str, wait: bool = True) -> dict:
-    """起動して serve を張る。返り値は {ok, already, message, logs}"""
+def start(name: str) -> dict:
+    """起動して、返事をするようになってから serve を張る。返り値は {ok, already, message, logs}
+
+    公開を先に張ってはいけない。tailscale が tailnet のアドレスで同じ番号を先に取るので、
+    全部のアドレスで待つサーバー(vite --host、python -m http.server など)が Address already in use で落ちる。
+    サーバーが先に待ち受けていれば、あとから張った公開とは共存できる(実測)。"""
     e = registry.load(name)
     if not e:
         raise RunError(f"台帳に無い: {name}")
@@ -117,24 +122,30 @@ def start(name: str, wait: bool = True) -> dict:
     if has_session(name):
         # 前に落ちて Enter 待ちのまま残っているもの
         _tmux("kill-session", "-t", f"={session_name(name)}")
+    # 宛先が止まったまま残っている同じ番号の公開を外す(残っていると、全部のアドレスで待つサーバーが落ちる)
+    if any(h["local_port"] for h in scan.parse_serve(scan.serve_status()).get(e["https_port"], [])):
+        unpublish(e["https_port"])
     r = _tmux("new-session", "-d", "-s", session_name(name), "-c", str(Path(e["cwd"]).expanduser()),
               "/bin/zsh", "-c", shell_line(e))
     if r.returncode != 0:
         raise RunError(f"tmux で起動できない: {r.stderr.strip()}")
-    publish(e)
-    if not wait:
-        return {"ok": True, "already": False, "message": "起動した(確認は待っていない)"}
     if wait_ready(e):
+        publish(e)
         return {"ok": True, "already": False, "message": "起動した"}
-    return {"ok": False, "already": False, "message": "返事が無い。ログを見ること", "logs": logs(name, 20)}
+    msg = "落ちた。ログを見ること" if scan.pane_stopped(session_name(name)) else "返事が無い(30 秒)。ログを見ること"
+    return {"ok": False, "already": False, "message": msg, "logs": logs(name, 20)}
 
 
 def stop(name: str) -> bool:
-    """tmux を止める。serve の公開は残す(また起動すれば同じ URL で開ける)。"""
-    if has_session(name):
-        _tmux("kill-session", "-t", f"={session_name(name)}")
-        return True
-    return False
+    """tmux を止めて、公開も外す。https ポートは台帳に残るので、また起動すれば同じ URL で開ける。
+    公開を残すと、次の起動で tailscale が番号を先に持っていて落ちる(start の説明)。"""
+    if not has_session(name):
+        return False
+    _tmux("kill-session", "-t", f"={session_name(name)}")
+    e = registry.load(name)
+    if e and e.get("https_port") not in registry.RESERVED_HTTPS_PORTS:
+        unpublish(e["https_port"])
+    return True
 
 
 def remove(name: str) -> dict:

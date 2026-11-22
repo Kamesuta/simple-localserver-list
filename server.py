@@ -3,7 +3,7 @@
 127.0.0.1:7440 だけで待ち、外へは tailscale serve(https :7463)で tailnet の中にだけ出す。
 起動すると自分の公開も張る。ログイン時に ログイン時のスクリプト の start_tmux から立つ。
 
-画面からできるのは、台帳にある行の 起動・停止・再起動・削除・ログ と、
+画面からできるのは、台帳にある行の 起動・停止・再起動・削除・ログ・お気に入り と、
 スキャンで見つけたものの 登録(下書き)・死んだ公開を外す だけ。
 コマンドを書き換える入口は作らない(任意のコマンドを実行させないため。直すのは srv add か Claude に頼む)。
 """
@@ -13,12 +13,14 @@ import re
 import sys
 import threading
 import time
+from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import meta  # noqa: E402
 import registry  # noqa: E402
 import runner  # noqa: E402
 import scan  # noqa: E402
@@ -28,7 +30,40 @@ PORT = int(os.environ.get("SLL_PORT", "7440"))
 HTTPS_PORT = int(os.environ.get("SLL_HTTPS_PORT", "7463"))
 WEB = Path(__file__).resolve().parent / "web"
 
-ROUTE = re.compile(r"^/api/servers/([a-z0-9][a-z0-9_-]{0,39})(?:/(start|stop|restart|logs))?$")
+ROUTE = re.compile(r"^/api/servers/([a-z0-9][a-z0-9_-]{0,39})(?:/(start|stop|restart|logs|favorite|unfavorite))?$")
+# お気に入り以外で、これだけ止まっていたら「片付け」に出す
+STALE_DAYS = float(os.environ.get("SLL_STALE_DAYS", "3"))
+
+
+def _created(e: dict) -> float:
+    try:
+        return datetime.fromisoformat(e.get("created_at", "")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def view() -> dict:
+    """画面に渡す形。スキャンに、ページのタイトル・アイコンの有無・最後に動いていた時刻を足す。"""
+    snap = scan.snapshot()
+    now = time.time()
+    servers = [s for s in snap["servers"] if not s.get("broken")]
+    last = registry.touch_last_up([s["name"] for s in servers if s["state"] in ("up", "partial")], now)
+    ports = [s["port"] for s in servers if s.get("running")] + [u["port"] for u in snap["unregistered"]]
+    infos = meta.many(ports)
+    for s in servers:
+        seen = max(last.get(s["name"], 0.0), _created(s))
+        s["last_up"] = seen
+        s["stale"] = (not s["favorite"] and s["state"] == "down" and now - seen > STALE_DAYS * 86400)
+        mi = infos.get(s["port"]) if s.get("running") else None
+        s["title"] = mi["title"] if mi else ""
+        s["icon"] = bool(mi and mi["icon"])
+    for u in snap["unregistered"]:
+        mi = infos.get(u["port"])
+        u["title"] = mi["title"] if mi else ""
+        u["icon"] = bool(mi and mi["icon"])
+    snap["now"] = now
+    snap["stale_days"] = STALE_DAYS
+    return snap
 
 
 def adopt(port: int) -> dict:
@@ -97,7 +132,8 @@ class Handler(SimpleHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         # 5 秒ごとの一覧の読み直しでログが埋まらないようにする
-        if "/api/servers HTTP" in (args[0] if args else ""):
+        first = str(args[0]) if args else ""  # log_error からは HTTPStatus が来る
+        if "/api/servers HTTP" in first or "/api/icon/" in first:
             return
         super().log_message(fmt, *args)
 
@@ -124,10 +160,27 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as ex:  # noqa: BLE001 — 画面には理由を返し、サーバーは落とさない
             self._send(500, {"error": f"{type(ex).__name__}: {ex}"})
 
+    def _icon(self, port: int) -> None:
+        # 今待ち受けているポートのものだけ(meta は 127.0.0.1 にしか取りに行かない)
+        if port not in scan.listening():
+            return self._send(404, {"error": "動いていない"})
+        mi = meta.info(port)
+        if not mi["icon"]:
+            return self._send(404, {"error": "アイコンが無い"})
+        self.send_response(200)
+        self.send_header("Content-Type", mi["icon_type"])
+        self.send_header("Content-Length", str(len(mi["icon"])))
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
+        self.end_headers()
+        self.wfile.write(mi["icon"])
+
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/api/servers":
-            return self._handle(scan.snapshot)
+            return self._handle(view)
+        mi = re.match(r"^/api/icon/(\d{1,5})$", path)
+        if mi:
+            return self._icon(int(mi.group(1)))
         m = ROUTE.match(path)
         if m and m.group(2) == "logs":
             return self._handle(lambda: {"logs": runner.logs(m.group(1), 80)})
@@ -142,6 +195,8 @@ class Handler(SimpleHTTPRequestHandler):
         m = ROUTE.match(path)
         if m and m.group(2) == "start":
             return self._handle(lambda: runner.start(m.group(1)))
+        if m and m.group(2) in ("favorite", "unfavorite"):
+            return self._handle(lambda: {"ok": True, "entry": registry.set_favorite(m.group(1), m.group(2) == "favorite")})
         if m and m.group(2) in ("stop", "restart"):
             return self._handle(lambda: stop_or_restart(m.group(1), m.group(2) == "restart"))
         m2 = re.match(r"^/api/adopt/(\d{1,5})$", path)
