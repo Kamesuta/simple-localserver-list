@@ -242,6 +242,23 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("read _", line)
         self.assertIn(scan.STOPPED_MARK, line)
 
+    def _restart(self, ok: bool) -> list:
+        from unittest import mock
+        calls = []
+        with mock.patch.object(runner, "has_session", return_value=False), \
+             mock.patch.object(runner, "start", return_value={"ok": ok}), \
+             mock.patch.object(share, "stop", side_effect=lambda n: calls.append(n)):
+            runner.restart("a")
+        return calls
+
+    def test_restart_keeps_share(self):
+        # 再起動では外への公開(trycloudflare)を止めない。渡した URL がそのまま使えるように
+        self.assertEqual(self._restart(ok=True), [])
+
+    def test_restart_failure_stops_share(self):
+        # 起動に失敗したら、宛先が無いまま外に出し続けない
+        self.assertEqual(self._restart(ok=False), ["a"])
+
 
 if __name__ == "__main__":
     unittest.main()

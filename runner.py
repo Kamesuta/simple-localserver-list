@@ -152,12 +152,14 @@ def start(name: str) -> dict:
     return {"ok": False, "already": False, "message": msg, "logs": logs(name, 20)}
 
 
-def stop(name: str) -> bool:
+def stop(name: str, keep_share: bool = False) -> bool:
     """tmux を止めて、公開も外す。https ポートは台帳に残るので、また起動すれば同じ URL で開ける。
-    公開を残すと、次の起動で tailscale が番号を先に持っていて落ちる(start の説明)。"""
+    公開を残すと、次の起動で tailscale が番号を先に持っていて落ちる(start の説明)。
+    keep_share は再起動のときだけ使う(restart の説明)。"""
     import share  # share は runner を使うので、ここで読む
 
-    share.stop(name)  # 外への公開も止める(宛先が無いのに出し続けない)
+    if not keep_share:
+        share.stop(name)  # 外への公開も止める(宛先が無いのに出し続けない)
     if not has_session(name):
         return False
     _tmux("kill-session", "-t", f"={session_name(name)}")
@@ -165,6 +167,20 @@ def stop(name: str) -> bool:
     if e and e.get("https_port") not in registry.RESERVED_HTTPS_PORTS:
         unpublish(e["https_port"])
     return True
+
+
+def restart(name: str) -> dict:
+    """止めて起動し直す。外への公開(trycloudflare)は止めずに残すので、渡した URL がそのまま使える。
+    cloudflared は 1 回ごとに 127.0.0.1:<ポート> へつなぐので、止まっている数秒だけ 502 になり、立てば戻る。
+    tailscale の公開は stop/start と同じく外して張り直す(start の説明)。
+    起動に失敗したら、宛先が無いまま出し続けないよう外への公開も止める。返り値は start と同じ"""
+    import share
+
+    stop(name, keep_share=True)
+    r = start(name)
+    if not r["ok"]:
+        share.stop(name)
+    return r
 
 
 def remove(name: str) -> dict:

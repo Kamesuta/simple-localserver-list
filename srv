@@ -86,9 +86,9 @@ def _url(e: dict) -> str:
     return f"https://{host}:{e['https_port']}{e['path']}" if host else ""
 
 
-def _start(name: str):
+def _start(name: str, restart: bool = False):
     try:
-        r = runner.start(name)
+        r = runner.restart(name) if restart else runner.start(name)
     except (runner.RunError, registry.RegistryError) as ex:
         die(str(ex))
     print(r["message"], file=sys.stdout if r["ok"] else sys.stderr, flush=True)
@@ -97,6 +97,11 @@ def _start(name: str):
             print("---- ログの最後 ----\n" + r["logs"], file=sys.stderr)
         sys.exit(1)
     print(_url(registry.load(name)))
+    if restart:
+        import share
+        st = share.status(name)
+        if st and st.get("url"):
+            print(f"外への公開はそのまま: {st['url']}")
 
 
 def cmd_start(a):
@@ -114,8 +119,7 @@ def cmd_stop(a):
 
 
 def cmd_restart(a):
-    runner.stop(a.name)
-    _start(a.name)
+    _start(a.name, restart=True)  # 外への公開(trycloudflare)は止めない
 
 
 def cmd_rm(a):

@@ -21,7 +21,7 @@ srv port [-n 2]                             # 帯(既定 7400-7599)の中の空�
 srv add <名前> --port P [--note "何の画面か"] -- <起動コマンド…>
 srv ls                                      # 状態つきの一覧
 srv logs <名前>                              # tmux の最後の行
-srv stop|start|restart <名前>                # stop は公開も外す(start で同じ URL に戻る)
+srv stop|start|restart <名前>                # stop は公開も外す(start で同じ URL に戻る)。restart は外への公開を残す
 srv rm <名前>                                # 止めて、公開を外して、台帳から消す
 srv fav <名前> [--off]                       # お気に入り(画面の最初のタブ)
 srv share <名前> [--minutes 60] [--off]      # trycloudflare で外に公開(時間で自動で止まる)

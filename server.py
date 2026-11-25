@@ -105,6 +105,8 @@ def unpublish(https_port: int) -> None:
 def stop_or_restart(name: str, restart: bool) -> dict:
     if not registry.load(name):
         raise runner.RunError(f"台帳に無い: {name}")
+    if restart and runner.has_session(name):
+        return runner.restart(name)  # 外への公開(trycloudflare)は止めない
     if not runner.stop(name):
         e = registry.normalize(registry.load(name))
         if runner.port_owner(e["port"]):
